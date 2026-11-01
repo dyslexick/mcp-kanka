@@ -555,15 +555,20 @@ class KankaService:
         Returns:
             Created entity data
         """
-        item: dict[str, Any] = {"name": name, "module": category_id}
+        # Kanka route: POST entities/{entity_type} with a list of entities
+        item: dict[str, Any] = {"name": name}
         if type is not None:
             item["type"] = type
         if entry is not None:
             item["entry"] = self.converter.markdown_to_html(entry)
         if tags:
             item["tags"] = self._get_or_create_tag_ids(tags)
+        if is_hidden is not None:
+            item["is_private"] = is_hidden
 
-        response = self.client._request("POST", "entities", json={"entities": [item]})
+        response = self.client._request(
+            "POST", f"entities/{category_id}", json={"entities": [item]}
+        )
         data = response.get("data")
         if isinstance(data, list):
             data = data[0] if data else {}
@@ -572,8 +577,6 @@ class KankaService:
 
         entity_id = data["id"]
         if is_hidden is not None:
-            # Privacy is not accepted on create, so set it in a second step
-            self.update_custom_entity(entity_id, name=name, is_hidden=is_hidden)
             data["is_private"] = is_hidden
 
         result = self._custom_entity_to_dict(data, category_id)

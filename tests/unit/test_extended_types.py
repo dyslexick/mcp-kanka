@@ -343,10 +343,9 @@ class TestCustomCategories:
         fake = use(
             service,
             {
-                ("POST", "entities"): {
+                ("POST", "entities/42"): {
                     "data": [{"id": 901, "name": "Sessionplanung 3.05"}]
                 },
-                ("PATCH", "entities/901"): {"data": {"id": 901}},
             },
         )
 
@@ -358,13 +357,13 @@ class TestCustomCategories:
             is_hidden=True,
         )
 
-        body = fake.find("POST", "entities")[0]["json"]
-        assert body["entities"][0]["module"] == 42
+        body = fake.find("POST", "entities/42")[0]["json"]
         assert body["entities"][0]["name"] == "Sessionplanung 3.05"
+        assert body["entities"][0]["is_private"] is True
+        assert "module" not in body["entities"][0]
         assert "Der Keller" in body["entities"][0]["entry"]
-        patch_body = fake.find("PATCH", "entities/901")[0]["json"]
-        assert patch_body["is_private"] is True
         assert result["entity_id"] == 901
+        assert result["is_hidden"] is True
         assert result["mention"] == "[entity:901]"
 
     def test_create_custom_entity_requires_category(self, service):
