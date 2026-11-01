@@ -25,9 +25,11 @@ from .tools import (
     handle_delete_posts,
     handle_find_entities,
     handle_get_entities,
+    handle_list_categories,
     handle_update_entities,
     handle_update_posts,
 )
+from .types import ALL_ENTITY_TYPES
 
 # Load environment variables
 load_dotenv()
@@ -80,16 +82,7 @@ async def list_tools() -> list[types.Tool]:
                     },
                     "entity_type": {
                         "type": "string",
-                        "enum": [
-                            "character",
-                            "creature",
-                            "location",
-                            "organization",
-                            "race",
-                            "note",
-                            "journal",
-                            "quest",
-                        ],
+                        "enum": list(ALL_ENTITY_TYPES),
                         "description": "Entity type to filter by",
                     },
                     "name": {
@@ -142,6 +135,10 @@ async def list_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": "ISO 8601 timestamp to get only entities modified after this time",
                     },
+                    "category_id": {
+                        "type": "integer",
+                        "description": "Category id from list_categories; required with entity_type 'custom'",
+                    },
                 },
             },
         ),
@@ -158,17 +155,12 @@ async def list_tools() -> list[types.Tool]:
                             "properties": {
                                 "entity_type": {
                                     "type": "string",
-                                    "enum": [
-                                        "character",
-                                        "creature",
-                                        "location",
-                                        "organization",
-                                        "race",
-                                        "note",
-                                        "journal",
-                                        "quest",
-                                    ],
-                                    "description": "Entity type",
+                                    "enum": list(ALL_ENTITY_TYPES),
+                                    "description": "Entity type ('custom' = entry of a custom category, needs category_id)",
+                                },
+                                "category_id": {
+                                    "type": "integer",
+                                    "description": "Category id from list_categories (only for entity_type 'custom')",
                                 },
                                 "name": {
                                     "type": "string",
@@ -186,6 +178,10 @@ async def list_tools() -> list[types.Tool]:
                                 "is_hidden": {
                                     "type": "boolean",
                                     "description": "If true, hidden from players (admin-only)",
+                                },
+                                "fields": {
+                                    "type": "object",
+                                    "description": "Additional type-specific Kanka API fields, e.g. {'price': '10 gp', 'size': 'small', 'location_id': 12} for items or {'date': '1897-05-06'} for events. Ids are type-specific ids, not entity ids.",
                                 },
                             },
                             "required": ["entity_type", "name"],
@@ -224,6 +220,10 @@ async def list_tools() -> list[types.Tool]:
                                 },
                                 "tags": {"type": "array", "items": {"type": "string"}},
                                 "is_hidden": {"type": "boolean"},
+                                "fields": {
+                                    "type": "object",
+                                    "description": "Additional type-specific Kanka API fields, e.g. {'price': '10 gp', 'size': 'small', 'location_id': 12} for items or {'date': '1897-05-06'} for events. Ids are type-specific ids, not entity ids.",
+                                },
                             },
                             "required": ["entity_id", "name"],
                         },
@@ -254,7 +254,7 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="delete_entities",
-            description="Delete one or more entities",
+            description="Delete one or more entities (only character, creature, location, organization, race, note, journal and quest)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -366,6 +366,11 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="list_categories",
+            description="List the campaign's categories (built-in and custom, e.g. a 'Session planning' category). Use the category_id with entity_type 'custom' in find_entities and create_entities.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        types.Tool(
             name="check_entity_updates",
             description="Check which entity_ids have been modified since last sync",
             inputSchema={
@@ -410,6 +415,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             result = await handle_update_posts(**arguments)
         elif name == "delete_posts":
             result = await handle_delete_posts(**arguments)
+        elif name == "list_categories":
+            result = await handle_list_categories(**arguments)
         elif name == "check_entity_updates":
             result = await handle_check_entity_updates(**arguments)
         else:

@@ -11,6 +11,8 @@ from typing import Any
 
 from .service import KankaService, get_service
 from .types import (
+    ALL_ENTITY_TYPES,
+    MODULE_ENTITY_TYPES,
     CheckEntityUpdatesResult,
     CreateEntityResult,
     CreatePostResult,
@@ -98,6 +100,7 @@ class KankaOperations:
         page: int = 1,
         limit: int = 25,
         last_synced: str | None = None,
+        category_id: int | None = None,
     ) -> dict[str, Any]:
         """Find entities with search and filtering capabilities.
 
@@ -114,42 +117,40 @@ class KankaOperations:
             page: Page number for pagination
             limit: Number of results per page (0 for all)
             last_synced: ISO timestamp to get only entities modified after this time
+            category_id: Category id, required for entity_type "custom"
 
         Returns:
             Dictionary with entities and sync_info
         """
         # Validate entity type if provided
-        valid_types = [
-            "character",
-            "creature",
-            "location",
-            "organization",
-            "race",
-            "note",
-            "journal",
-            "quest",
-        ]
+        valid_types = list(ALL_ENTITY_TYPES)
         if entity_type and entity_type not in valid_types:
             logger.error(
                 f"Invalid entity_type: {entity_type}. Must be one of: {', '.join(valid_types)}"
             )
             return {"entities": [], "sync_info": {}}
 
+        if entity_type == "custom" and not category_id:
+            logger.error("category_id is required for entity_type 'custom'")
+            return {"entities": [], "sync_info": {}}
+
         try:
             # Step 1: Get entities
-            if query:
+            if entity_type == "custom" and category_id:
+                # Entries of a (custom) category via the generic endpoint
+                entities = self.service.list_category_entities(
+                    category_id, last_sync=last_synced
+                )
+                if query:
+                    entities = search_in_content(entities, query)
+            elif query:
                 # For content search, we need full entities
                 entities = []
 
                 if entity_type:
                     # Search specific entity type
-                    # Cast to EntityType since we validated it above
-                    from typing import cast
-
-                    from .types import EntityType
-
                     entity_objects = self.service.list_entities(
-                        cast(EntityType, entity_type),
+                        entity_type,
                         page=1,
                         limit=0,
                         last_sync=last_synced,
@@ -162,16 +163,7 @@ class KankaOperations:
                     # Search across all entity types
                     from .types import EntityType
 
-                    entity_types: list[EntityType] = [
-                        "character",
-                        "creature",
-                        "location",
-                        "organization",
-                        "race",
-                        "note",
-                        "journal",
-                        "quest",
-                    ]
+                    entity_types: list[EntityType] = list(MODULE_ENTITY_TYPES)
                     for et in entity_types:
                         try:
                             entity_objects = self.service.list_entities(
@@ -210,13 +202,8 @@ class KankaOperations:
                     return {"entities": [], "sync_info": {}}
 
                 # Get all entities of this type
-                # Cast to EntityType since we validated it above
-                from typing import cast
-
-                from .types import EntityType
-
                 entity_objects = self.service.list_entities(
-                    cast(EntityType, entity_type),
+                    entity_type,
                     page=1,
                     limit=0,
                     last_sync=last_synced,
@@ -310,16 +297,7 @@ class KankaOperations:
             List of results, one per entity (success or failure)
         """
         results = []
-        valid_types = [
-            "character",
-            "creature",
-            "location",
-            "organization",
-            "race",
-            "note",
-            "journal",
-            "quest",
-        ]
+        valid_types = list(ALL_ENTITY_TYPES)
 
         for entity_input in entities:
             entity_type = entity_input.get("entity_type")
@@ -366,6 +344,8 @@ class KankaOperations:
                     is_completed=entity_input.get("is_completed"),
                     image_uuid=entity_input.get("image_uuid"),
                     header_uuid=entity_input.get("header_uuid"),
+                    fields=entity_input.get("fields"),
+                    category_id=entity_input.get("category_id"),
                 )
 
                 result: CreateEntityResult = {
@@ -441,6 +421,7 @@ class KankaOperations:
                     is_completed=update.get("is_completed"),
                     image_uuid=update.get("image_uuid"),
                     header_uuid=update.get("header_uuid"),
+                    fields=update.get("fields"),
                 )
 
                 result: UpdateEntityResult = {
@@ -505,6 +486,11 @@ class KankaOperations:
                     result["image_thumb"] = entity.get("image_thumb")
                     result["image_uuid"] = entity.get("image_uuid")
                     result["header_uuid"] = entity.get("header_uuid")
+
+                    if entity.get("fields"):
+                        result["fields"] = entity["fields"]
+                    if entity.get("category_id") is not None:
+                        result["category_id"] = entity["category_id"]
 
                     if include_posts:
                         result["posts"] = entity.get("posts", [])
@@ -690,6 +676,14 @@ class KankaOperations:
                 results.append(error_result)
 
         return results
+
+    async def list_categories(self) -> list[dict[str, Any]]:
+        """List the campaign's categories, including custom ones.
+
+        Returns:
+            List of categories (category_id, code, singular, plural, is_custom)
+        """
+        return self.service.list_categories()
 
     async def check_entity_updates(
         self, entity_ids: list[int], last_synced: str

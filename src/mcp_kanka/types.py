@@ -1,6 +1,6 @@
 """Type definitions for the Kanka MCP server."""
 
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 # Supported entity types
 EntityType = Literal[
@@ -12,7 +12,51 @@ EntityType = Literal[
     "note",
     "journal",
     "quest",
+    "event",
+    "family",
+    "calendar",
+    "item",
+    "ability",
+    "timeline",
+    "map",
+    "custom",
 ]
+
+# Entity types backed by a regular Kanka module endpoint
+MODULE_ENTITY_TYPES: tuple[EntityType, ...] = (
+    "character",
+    "creature",
+    "location",
+    "organization",
+    "race",
+    "note",
+    "journal",
+    "quest",
+    "event",
+    "family",
+    "calendar",
+    "item",
+    "ability",
+    "timeline",
+    "map",
+)
+
+# All entity types accepted by the tools ("custom" = entry of a custom
+# category, which needs a category_id)
+ALL_ENTITY_TYPES: tuple[EntityType, ...] = (*MODULE_ENTITY_TYPES, "custom")
+
+# Entity types that may be deleted through this server. Newer types are
+# deliberately excluded so that a mistake cannot remove them.
+DELETABLE_ENTITY_TYPES: tuple[EntityType, ...] = (
+    "character",
+    "creature",
+    "location",
+    "organization",
+    "race",
+    "note",
+    "journal",
+    "quest",
+)
 
 
 # Request types
@@ -235,6 +279,8 @@ class GetEntityResult(TypedDict, total=False):
     image_thumb: str | None  # URL to the thumbnail
     image_uuid: str | None  # Image gallery UUID
     header_uuid: str | None  # Header image gallery UUID
+    fields: dict[str, Any] | None  # Type-specific fields (price, date, ...)
+    category_id: int | None  # For custom category entries
 
 
 class DeleteEntityResult(TypedDict):
@@ -281,6 +327,7 @@ class KankaContextFields(TypedDict):
     entry: str
     tags: str
     is_hidden: str  # This stores the description of the is_hidden field
+    fields: str
 
 
 class KankaContextTerminology(TypedDict):

@@ -44,6 +44,7 @@ async def handle_find_entities(**params: Any) -> dict[str, Any]:
         page=params.get("page", 1),
         limit=params.get("limit", 25),
         last_synced=params.get("last_synced"),
+        category_id=params.get("category_id"),
     )
 
 
@@ -188,3 +189,14 @@ async def handle_check_entity_updates(**params: Any) -> CheckEntityUpdatesResult
 
     # Delegate to operations layer
     return await operations.check_entity_updates(entity_ids, last_synced)
+
+
+async def handle_list_categories(**_params: Any) -> list[dict[str, Any]]:
+    """
+    List the campaign's categories, including custom ones.
+
+    Returns:
+        List of categories with category_id, code, names and is_custom
+    """
+    operations = get_operations()
+    return await operations.list_categories()

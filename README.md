@@ -86,8 +86,30 @@ claude mcp add kanka \
 - **Note** - Internal content, session digests, GM notes (private by default)
 - **Journal** - Session summaries, narratives, chronicles
 - **Quest** - Missions, objectives, story arcs
+- **Event** - Historical or campaign events
+- **Family** - Families, houses, lineages
+- **Calendar** - Campaign calendars
+- **Item** - Objects, artifacts, weapons, documents
+- **Ability** - Spells, powers, abilities
+- **Timeline** - Timelines
+- **Map** - Maps
+- **Custom** - Entries of a custom category. Use `list_categories` to get the
+  `category_id`, then pass `entity_type: "custom"` and `category_id` to
+  `find_entities` and `create_entities`. `get_entities`, `update_entities`
+  and the post tools work with the entity id as usual.
 
-## Available Tools (9 Total)
+Type-specific API fields (e.g. `price`, `size`, `location_id` for items,
+`date` for events) can be sent through the optional `fields` object of
+`create_entities` and `update_entities`; they are returned under `fields`.
+Values are passed to Kanka unvalidated.
+
+Deleting entities is only possible for the original eight types (character
+to quest). Items, events, custom entries etc. must be deleted in Kanka.
+
+## Available Tools (10 Total)
+
+The tools below plus `list_categories`, which lists the campaign's built-in
+and custom categories with their `category_id`.
 
 ### Entity Operations
 

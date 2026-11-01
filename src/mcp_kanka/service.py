@@ -8,10 +8,14 @@ from typing import Any
 
 from kanka import KankaClient
 from kanka.exceptions import KankaException
+from kanka.managers import EntityManager
 from kanka.models import (
+    Calendar,
     Character,
     Creature,
     Entity,
+    Event,
+    Family,
     Journal,
     Location,
     Note,
@@ -22,16 +26,85 @@ from kanka.models import (
 )
 
 from .converter import ContentConverter
-from .types import EntityType
+from .types import (
+    DELETABLE_ENTITY_TYPES,
+    MODULE_ENTITY_TYPES,
+    EntityType,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class Item(Entity):
+    """Item (object) entity. Not modelled by python-kanka, so defined here."""
+
+    type: str | None = None
+
+
+class Ability(Entity):
+    """Ability entity. Not modelled by python-kanka, so defined here."""
+
+    type: str | None = None
+
+
+class Timeline(Entity):
+    """Timeline entity. Not modelled by python-kanka, so defined here."""
+
+    type: str | None = None
+
+
+class Map(Entity):
+    """Map entity. Not modelled by python-kanka, so defined here."""
+
+    type: str | None = None
+
+
+# Fields of the base Entity model and fields that the service already exposes
+# under their own keys. Everything else on a model is returned under "fields".
+_BASE_FIELD_NAMES = set(Entity.model_fields) | {
+    "type",
+    "is_completed",
+    "image_uuid",
+    "header_uuid",
+    "has_custom_image",
+    "has_custom_header",
+    "image_path",
+    "header_image",
+    "entity_type",
+    "entry_parsed",
+    "tooltip",
+    "focus_x",
+    "focus_y",
+    "is_template",
+    "is_attributes_private",
+    "campaign_id",
+    "urls",
+    "child",
+    "child_id",
+    "type_id",
+}
+
+# Keys the generic "fields" parameter may not override, because they are set
+# through dedicated parameters.
+_PROTECTED_FIELD_KEYS = {
+    "id",
+    "entity_id",
+    "name",
+    "entry",
+    "is_private",
+    "tags",
+    "type",
+    "is_completed",
+    "image_uuid",
+    "header_uuid",
+}
 
 
 class KankaService:
     """Service layer wrapping the python-kanka client."""
 
     # Map entity types to their model classes
-    ENTITY_TYPE_MAP = {
+    ENTITY_TYPE_MAP: dict[str, type[Entity]] = {
         "character": Character,
         "creature": Creature,
         "location": Location,
@@ -40,6 +113,13 @@ class KankaService:
         "note": Note,
         "journal": Journal,
         "quest": Quest,
+        "event": Event,
+        "family": Family,
+        "calendar": Calendar,
+        "item": Item,
+        "ability": Ability,
+        "timeline": Timeline,
+        "map": Map,
     }
 
     # Map entity types to their Kanka API endpoints
@@ -52,6 +132,34 @@ class KankaService:
         "note": "notes",
         "journal": "journals",
         "quest": "quests",
+        "event": "events",
+        "family": "families",
+        "calendar": "calendars",
+        "item": "items",
+        "ability": "abilities",
+        "timeline": "timelines",
+        "map": "maps",
+    }
+
+    # Map Kanka's entity type codes to our internal types
+    API_CODE_MAP = {
+        "character": "character",
+        "creature": "creature",
+        "location": "location",
+        "organisation": "organization",
+        "organization": "organization",
+        "race": "race",
+        "note": "note",
+        "journal": "journal",
+        "quest": "quest",
+        "event": "event",
+        "family": "family",
+        "calendar": "calendar",
+        "item": "item",
+        "object": "item",
+        "ability": "ability",
+        "timeline": "timeline",
+        "map": "map",
     }
 
     def __init__(self) -> None:
@@ -67,6 +175,37 @@ class KankaService:
         self.client = KankaClient(token=token, campaign_id=int(campaign_id))
         self.converter = ContentConverter()
         self._tag_cache: dict[str, Tag] = {}
+        self._managers: dict[str, Any] = {}
+        # Posts live under entities/{entity_id}/posts for every entity type,
+        # so one generic manager serves entities without a type manager
+        # (e.g. entries of custom categories).
+        self._post_manager: Any = EntityManager(self.client, "entities", Entity)
+
+    def _manager(self, entity_type: str) -> Any:
+        """
+        Get the manager for an entity type.
+
+        python-kanka ships managers for some types; for the others
+        (items, abilities, timelines, maps) a generic EntityManager is built.
+        """
+        if entity_type not in self.API_ENDPOINT_MAP:
+            raise ValueError(f"Unsupported entity type: {entity_type}")
+
+        if entity_type not in self._managers:
+            endpoint = self.API_ENDPOINT_MAP[entity_type]
+            manager = getattr(self.client, endpoint, None)
+            if manager is None:
+                manager = EntityManager(
+                    self.client, endpoint, self.ENTITY_TYPE_MAP[entity_type]
+                )
+            self._managers[entity_type] = manager
+        return self._managers[entity_type]
+
+    def _post_manager_for(self, entity_type: str) -> Any:
+        """Get a manager that can handle posts for an entity type."""
+        if entity_type in self.API_ENDPOINT_MAP:
+            return self._manager(entity_type)
+        return self._post_manager
 
     def search_entities(
         self,
@@ -93,7 +232,7 @@ class KankaService:
 
             if entity_type:
                 # Search specific entity type
-                manager = getattr(self.client, self.API_ENDPOINT_MAP[entity_type])
+                manager = self._manager(entity_type)
 
                 # Use name filter to search - it does partial matching!
                 results = manager.list(name=query, limit=limit)
@@ -111,11 +250,11 @@ class KankaService:
                 # We'll need to query each type separately
                 remaining_limit = limit
 
-                for our_type, manager_name in self.API_ENDPOINT_MAP.items():
+                for our_type in MODULE_ENTITY_TYPES:
                     if remaining_limit <= 0:
                         break
 
-                    manager = getattr(self.client, manager_name)
+                    manager = self._manager(our_type)
 
                     # Get up to remaining_limit results from this type
                     type_limit = min(remaining_limit, 100)  # API max is 100
@@ -167,7 +306,7 @@ class KankaService:
             List of entity objects
         """
         try:
-            manager = getattr(self.client, self.API_ENDPOINT_MAP[entity_type])
+            manager = self._manager(entity_type)
 
             # Build filters
             filters = {}
@@ -265,6 +404,214 @@ class KankaService:
             logger.error(f"List entities failed: {e}")
             raise
 
+    def _resolve_entity_type(self, found_entity: dict[str, Any]) -> str | None:
+        """
+        Map the data of the /entities/{id} endpoint to our internal type.
+
+        Kanka has used different field names for the type code over time, so
+        several candidates are checked. Returns None for custom categories.
+        """
+        for key in ("type", "entity_type", "entity_type_code"):
+            code = found_entity.get(key)
+            if isinstance(code, str) and code.lower() in self.API_CODE_MAP:
+                return self.API_CODE_MAP[code.lower()]
+        return None
+
+    def list_categories(self) -> list[dict[str, Any]]:
+        """
+        List the campaign's categories (built-in and custom).
+
+        Returns:
+            List of categories with id, code, singular, plural and is_custom
+        """
+        response = self.client._request("GET", "entity_types")
+        categories = []
+        for item in response.get("data", []):
+            categories.append(
+                {
+                    "category_id": item.get("id"),
+                    "code": item.get("code"),
+                    "singular": item.get("singular"),
+                    "plural": item.get("plural"),
+                    "is_custom": bool(item.get("is_custom")),
+                }
+            )
+        return categories
+
+    def list_category_entities(
+        self, category_id: int, last_sync: str | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        List all entries of a category (works for custom categories).
+
+        Args:
+            category_id: The category id (from list_categories)
+            last_sync: ISO 8601 timestamp to get only entries modified after it
+
+        Returns:
+            List of entity dictionaries (entry not included by the API)
+        """
+        results: list[dict[str, Any]] = []
+        page = 1
+        while page <= 50:
+            params: dict[str, Any] = {
+                "type_id[]": category_id,
+                "page": page,
+                "limit": 100,
+            }
+            if last_sync:
+                params["lastSync"] = last_sync
+            response = self.client._request("GET", "entities", params=params)
+            for item in response.get("data", []):
+                results.append(self._custom_entity_to_dict(item))
+            if not response.get("links", {}).get("next"):
+                break
+            page += 1
+        return results
+
+    def _custom_entity_to_dict(
+        self, data: dict[str, Any], category_id: int | None = None
+    ) -> dict[str, Any]:
+        """Convert raw /entities data of a custom category entry to our format."""
+        child = data.get("child") if isinstance(data.get("child"), dict) else {}
+        entry_html = data.get("entry") or (child or {}).get("entry")
+        is_private = data.get("is_private")
+
+        result: dict[str, Any] = {
+            "id": data.get("id"),
+            "entity_id": data.get("id"),
+            "name": data.get("name"),
+            "entity_type": "custom",
+            "category_id": category_id or data.get("type_id"),
+            "type": data.get("type") if isinstance(data.get("type"), str) else None,
+            "entry": (
+                self.converter.html_to_markdown(entry_html) if entry_html else None
+            ),
+            "tags": self._resolve_tag_names(data.get("tags") or []),
+            "is_hidden": bool(is_private) if is_private is not None else False,
+            "created_at": data.get("created_at"),
+            "updated_at": data.get("updated_at"),
+            "image": None,
+            "image_full": None,
+            "image_thumb": None,
+            "image_uuid": data.get("image_uuid"),
+            "header_uuid": data.get("header_uuid"),
+        }
+        parent_id = data.get("parent_id")
+        if parent_id is not None:
+            result["fields"] = {"parent_id": parent_id}
+        return result
+
+    def _get_custom_entity(
+        self,
+        entity_id: int,
+        found_entity: dict[str, Any],
+        include_posts: bool,
+    ) -> dict[str, Any] | None:
+        """Get an entry of a custom category, including its entry text."""
+        data = found_entity
+        if not (data.get("entry") or (data.get("child") or {}).get("entry")):
+            # The plain endpoint may omit the entry; ask for related data
+            try:
+                response = self.client._request(
+                    "GET", f"entities/{entity_id}", params={"related": 1}
+                )
+                data = {**found_entity, **response.get("data", {})}
+            except Exception as e:
+                logger.debug(f"Related fetch failed for {entity_id}: {e}")
+
+        result = self._custom_entity_to_dict(data)
+
+        if include_posts:
+            try:
+                posts = self._post_manager.list_posts(entity_id, limit=100)
+                result["posts"] = [self._post_to_dict(post) for post in posts]
+            except Exception as e:
+                logger.warning(f"Failed to get posts for entity {entity_id}: {e}")
+                result["posts"] = []
+
+        return result
+
+    def create_custom_entity(
+        self,
+        category_id: int,
+        name: str,
+        type: str | None = None,
+        entry: str | None = None,
+        tags: list[str] | None = None,
+        is_hidden: bool | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create an entry in a (custom) category via the generic entities endpoint.
+
+        Args:
+            category_id: Category id (from list_categories)
+            name: Entry name
+            type: Type field
+            entry: Description in Markdown
+            tags: Tag names
+            is_hidden: Whether the entry should be hidden from players
+
+        Returns:
+            Created entity data
+        """
+        item: dict[str, Any] = {"name": name, "module": category_id}
+        if type is not None:
+            item["type"] = type
+        if entry is not None:
+            item["entry"] = self.converter.markdown_to_html(entry)
+        if tags:
+            item["tags"] = self._get_or_create_tag_ids(tags)
+
+        response = self.client._request("POST", "entities", json={"entities": [item]})
+        data = response.get("data")
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        if not isinstance(data, dict) or not data.get("id"):
+            raise ValueError(f"Unexpected response when creating entity: {response}")
+
+        entity_id = data["id"]
+        if is_hidden is not None:
+            # Privacy is not accepted on create, so set it in a second step
+            self.update_custom_entity(entity_id, name=name, is_hidden=is_hidden)
+            data["is_private"] = is_hidden
+
+        result = self._custom_entity_to_dict(data, category_id)
+        result["mention"] = f"[entity:{entity_id}]"
+        return result
+
+    def update_custom_entity(
+        self,
+        entity_id: int,
+        name: str,
+        type: str | None = None,
+        entry: str | None = None,
+        tags: list[str] | None = None,
+        is_hidden: bool | None = None,
+        fields: dict[str, Any] | None = None,
+    ) -> bool:
+        """Update an entry of a custom category via the generic entities endpoint."""
+        data: dict[str, Any] = {"name": name}
+        if type is not None:
+            data["type"] = type
+        if entry is not None:
+            data["entry"] = self.converter.markdown_to_html(entry)
+        if is_hidden is not None:
+            data["is_private"] = is_hidden
+        if tags is not None:
+            data["tags"] = self._get_or_create_tag_ids(tags)
+        data.update(self._clean_fields(fields))
+
+        self.client._request("PATCH", f"entities/{entity_id}", json=data)
+        return True
+
+    @staticmethod
+    def _clean_fields(fields: dict[str, Any] | None) -> dict[str, Any]:
+        """Drop keys from generic fields that have dedicated parameters."""
+        if not fields:
+            return {}
+        return {k: v for k, v in fields.items() if k not in _PROTECTED_FIELD_KEYS}
+
     def get_entity_by_id(
         self, entity_id: int, include_posts: bool = False
     ) -> dict[str, Any] | None:
@@ -286,43 +633,24 @@ class KankaService:
                 # Entity not found
                 return None
 
-            # Get entity type - it's in the 'type' field
-            entity_type = found_entity.get("type")
+            our_type = self._resolve_entity_type(found_entity)
 
-            # Map to our internal type
-            our_type = None
-            if entity_type == "character":
-                our_type = "character"
-            elif entity_type == "creature":
-                our_type = "creature"
-            elif entity_type == "location":
-                our_type = "location"
-            elif entity_type == "organisation":
-                our_type = "organization"
-            elif entity_type == "race":
-                our_type = "race"
-            elif entity_type == "note":
-                our_type = "note"
-            elif entity_type == "journal":
-                our_type = "journal"
-            elif entity_type == "quest":
-                our_type = "quest"
-            else:
-                return None
+            if our_type is None:
+                # Not a built-in module: treat it as an entry of a custom
+                # category (e.g. a campaign-specific "Session planning" type)
+                return self._get_custom_entity(entity_id, found_entity, include_posts)
 
             # The entity endpoint returns the data in 'child' field
-            child_data = found_entity.get("child")
-            if not child_data:
-                return None
+            child_data = found_entity.get("child") or {}
 
             # Get the type-specific ID
-            type_id = child_data.get("id")
+            type_id = child_data.get("id") or found_entity.get("child_id")
             if not type_id:
                 return None
 
             # Now use the type-specific manager to get a proper entity object
             # This gives us consistent data format with datetime objects
-            manager = getattr(self.client, self.API_ENDPOINT_MAP[our_type])
+            manager = self._manager(our_type)
             entity = manager.get(type_id)
 
             # Use _entity_to_dict to handle all conversions consistently
@@ -332,7 +660,7 @@ class KankaService:
             if include_posts:
                 try:
                     # Get the manager for this entity type
-                    manager = getattr(self.client, self.API_ENDPOINT_MAP[our_type])
+                    manager = self._manager(our_type)
                     # Use entity_id, not the type-specific id
                     posts = manager.list_posts(entity_id, limit=100)
                     result["posts"] = [self._post_to_dict(post) for post in posts]
@@ -357,6 +685,8 @@ class KankaService:
         is_completed: bool | None = None,
         image_uuid: str | None = None,
         header_uuid: str | None = None,
+        fields: dict[str, Any] | None = None,
+        category_id: int | None = None,
     ) -> dict[str, Any]:
         """
         Create a new entity.
@@ -371,12 +701,26 @@ class KankaService:
             is_completed: Whether quest is completed (quests only)
             image_uuid: Image gallery UUID for entity image
             header_uuid: Image gallery UUID for entity header
+            fields: Additional type-specific API fields (e.g. price for items)
+            category_id: Category id, required for entity_type "custom"
 
         Returns:
             Created entity data
         """
         try:
-            manager = getattr(self.client, self.API_ENDPOINT_MAP[entity_type])
+            if entity_type == "custom":
+                if not category_id:
+                    raise ValueError("category_id is required for entity_type 'custom'")
+                return self.create_custom_entity(
+                    category_id=category_id,
+                    name=name,
+                    type=type,
+                    entry=entry,
+                    tags=tags,
+                    is_hidden=is_hidden,
+                )
+
+            manager = self._manager(entity_type)
 
             # Prepare data
             data: dict[str, Any] = {"name": name}
@@ -414,6 +758,9 @@ class KankaService:
             if header_uuid is not None:
                 data["header_uuid"] = header_uuid
 
+            # Type-specific fields (price, location_id, date, ...)
+            data.update(self._clean_fields(fields))
+
             # Create entity
             entity = manager.create(**data)
 
@@ -443,6 +790,7 @@ class KankaService:
         is_completed: bool | None = None,
         image_uuid: str | None = None,
         header_uuid: str | None = None,
+        fields: dict[str, Any] | None = None,
     ) -> bool:
         """
         Update an existing entity.
@@ -457,6 +805,7 @@ class KankaService:
             is_completed: Whether quest is completed (quests only)
             image_uuid: Image gallery UUID for entity image
             header_uuid: Image gallery UUID for entity header
+            fields: Additional type-specific API fields (e.g. price for items)
 
         Returns:
             True if successful
@@ -468,7 +817,18 @@ class KankaService:
                 raise ValueError(f"Entity {entity_id} not found")
 
             entity_type = entity_data["entity_type"]
-            manager = getattr(self.client, self.API_ENDPOINT_MAP[entity_type])
+            if entity_type == "custom":
+                return self.update_custom_entity(
+                    entity_id,
+                    name=name,
+                    type=type,
+                    entry=entry,
+                    tags=tags,
+                    is_hidden=is_hidden,
+                    fields=fields,
+                )
+
+            manager = self._manager(entity_type)
 
             # Prepare update data
             data: dict[str, Any] = {"name": name}
@@ -500,6 +860,9 @@ class KankaService:
             if header_uuid is not None:
                 data["header_uuid"] = header_uuid
 
+            # Type-specific fields (price, location_id, date, ...)
+            data.update(self._clean_fields(fields))
+
             # Update entity
             manager.update(entity_data["id"], **data)
             return True
@@ -525,7 +888,12 @@ class KankaService:
                 raise ValueError(f"Entity {entity_id} not found")
 
             entity_type = entity_data["entity_type"]
-            manager = getattr(self.client, self.API_ENDPOINT_MAP[entity_type])
+            if entity_type not in DELETABLE_ENTITY_TYPES:
+                raise ValueError(
+                    f"Deleting entities of type '{entity_type}' is disabled "
+                    "in this server; delete it in Kanka directly"
+                )
+            manager = self._manager(entity_type)
 
             # Delete entity
             manager.delete(entity_data["id"])
@@ -561,7 +929,7 @@ class KankaService:
                 raise ValueError(f"Entity {entity_id} not found")
 
             entity_type = entity_data["entity_type"]
-            manager = getattr(self.client, self.API_ENDPOINT_MAP[entity_type])
+            manager = self._post_manager_for(entity_type)
 
             # Convert markdown to HTML if entry provided
             html_entry = self.converter.markdown_to_html(entry) if entry else None
@@ -614,7 +982,7 @@ class KankaService:
                 raise ValueError(f"Entity {entity_id} not found")
 
             entity_type = entity_data["entity_type"]
-            manager = getattr(self.client, self.API_ENDPOINT_MAP[entity_type])
+            manager = self._post_manager_for(entity_type)
 
             # Prepare update data
             kwargs: dict[str, Any] = {"name": name}
@@ -656,7 +1024,7 @@ class KankaService:
                 raise ValueError(f"Entity {entity_id} not found")
 
             entity_type = entity_data["entity_type"]
-            manager = getattr(self.client, self.API_ENDPOINT_MAP[entity_type])
+            manager = self._post_manager_for(entity_type)
 
             # Delete post - use entity_id, not the type-specific id
             manager.delete_post(entity_id, post_id)
@@ -832,7 +1200,33 @@ class KankaService:
         result["image_uuid"] = getattr(entity, "image_uuid", None)
         result["header_uuid"] = getattr(entity, "header_uuid", None)
 
+        # Type-specific fields (price/size for items, date for events, ...)
+        extra_fields = self._extra_fields(entity)
+        if extra_fields:
+            result["fields"] = extra_fields
+
         return result
+
+    @staticmethod
+    def _extra_fields(entity: Any) -> dict[str, Any]:
+        """Collect non-empty type-specific fields of an entity model."""
+        try:
+            dumped = entity.model_dump()
+        except Exception:
+            return {}
+        if not isinstance(dumped, dict):
+            return {}
+
+        fields: dict[str, Any] = {}
+        for key, value in dumped.items():
+            if key in _BASE_FIELD_NAMES or value is None:
+                continue
+            if isinstance(value, (list, dict, str)) and not value:
+                continue
+            if hasattr(value, "isoformat"):
+                value = value.isoformat()
+            fields[key] = value
+        return fields
 
     def _post_to_dict(self, post: Any) -> dict[str, Any]:
         """
