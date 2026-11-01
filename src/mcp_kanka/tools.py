@@ -100,6 +100,22 @@ async def handle_get_entities(**params: Any) -> list[GetEntityResult]:
     return await operations.get_entities(entity_ids, include_posts)
 
 
+async def handle_archive_entities(**params: Any) -> list[dict[str, Any]]:
+    """
+    Archive or unarchive entities.
+
+    Args:
+        **params: entity_ids and optional archived (default True)
+
+    Returns:
+        List of results with the resulting archived state
+    """
+    operations = get_operations()
+    return await operations.archive_entities(
+        params.get("entity_ids", []), params.get("archived", True)
+    )
+
+
 async def handle_delete_entities(**params: Any) -> list[DeleteEntityResult]:
     """
     Delete one or more entities.

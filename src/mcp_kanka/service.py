@@ -874,6 +874,34 @@ class KankaService:
             logger.error(f"Update entity failed for {entity_id}: {e}")
             raise
 
+    def set_archived(self, entity_id: int, archived: bool = True) -> bool:
+        """
+        Archive or unarchive an entity.
+
+        Kanka only offers a toggle (POST entities/{id}/archive), so the current
+        state is read first and the toggle is only sent when it must change.
+
+        Args:
+            entity_id: Entity ID
+            archived: True to archive, False to unarchive
+
+        Returns:
+            The archived state after the call
+        """
+        found = self.client.entity(entity_id)
+        if not found:
+            raise ValueError(f"Entity {entity_id} not found")
+
+        is_archived = bool(found.get("archived_at"))
+        if is_archived == archived:
+            return is_archived
+
+        response = self.client._request("POST", f"entities/{entity_id}/archive")
+        data = response.get("data", {}) if isinstance(response, dict) else {}
+        if isinstance(data, dict) and "archived_at" in data:
+            return bool(data.get("archived_at"))
+        return archived
+
     def delete_entity(self, entity_id: int) -> bool:
         """
         Delete an entity.

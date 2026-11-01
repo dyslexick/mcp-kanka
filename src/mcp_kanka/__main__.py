@@ -18,6 +18,7 @@ from pydantic import AnyUrl
 
 from .resources import get_kanka_context
 from .tools import (
+    handle_archive_entities,
     handle_check_entity_updates,
     handle_create_entities,
     handle_create_posts,
@@ -253,6 +254,26 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="archive_entities",
+            description="Archive or unarchive entities (reversible; archived entities stay in Kanka). Works for all entity types.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Array of entity IDs",
+                    },
+                    "archived": {
+                        "type": "boolean",
+                        "description": "True to archive (default), false to unarchive",
+                        "default": True,
+                    },
+                },
+                "required": ["entity_ids"],
+            },
+        ),
+        types.Tool(
             name="delete_entities",
             description="Delete one or more entities (only character, creature, location, organization, race, note, journal and quest)",
             inputSchema={
@@ -407,6 +428,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             result = await handle_update_entities(**arguments)
         elif name == "get_entities":
             result = await handle_get_entities(**arguments)
+        elif name == "archive_entities":
+            result = await handle_archive_entities(**arguments)
         elif name == "delete_entities":
             result = await handle_delete_entities(**arguments)
         elif name == "create_posts":

@@ -515,6 +515,46 @@ class KankaOperations:
 
         return results
 
+    async def archive_entities(
+        self, entity_ids: list[int], archived: bool = True
+    ) -> list[dict[str, Any]]:
+        """Archive or unarchive entities.
+
+        Args:
+            entity_ids: Entity IDs
+            archived: True to archive, False to unarchive
+
+        Returns:
+            One result per entity with the resulting archived state
+        """
+        results: list[dict[str, Any]] = []
+        for entity_id in entity_ids:
+            try:
+                state = self.service.set_archived(entity_id, archived)
+                results.append(
+                    {
+                        "entity_id": entity_id,
+                        "archived": state,
+                        "success": state == archived,
+                        "error": (
+                            None
+                            if state == archived
+                            else "Kanka did not change the archived state"
+                        ),
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Failed to set archived for {entity_id}: {e}")
+                results.append(
+                    {
+                        "entity_id": entity_id,
+                        "archived": None,
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
+        return results
+
     async def delete_entities(self, entity_ids: list[int]) -> list[DeleteEntityResult]:
         """Delete one or more entities.
 

@@ -459,3 +459,61 @@ class TestOperationsAndTools:
         assert "fields" in create_props
         assert "category_id" in create_props
         json.dumps([tool.inputSchema for tool in tools.values()])
+
+
+class TestArchive:
+    def test_archive_toggles_only_when_needed(self, service):
+        fake = use(
+            service,
+            {
+                ("GET", "entities/500"): {"data": {"id": 500, "archived_at": None}},
+                ("POST", "entities/500/archive"): {
+                    "data": {"id": 500, "archived_at": TS}
+                },
+            },
+        )
+
+        assert service.set_archived(500, True) is True
+        assert len(fake.find("POST", "entities/500/archive")) == 1
+
+    def test_archive_already_archived_does_not_toggle(self, service):
+        fake = use(
+            service,
+            {("GET", "entities/500"): {"data": {"id": 500, "archived_at": TS}}},
+        )
+
+        assert service.set_archived(500, True) is True
+        assert not fake.find("POST", "entities/500/archive")
+
+    def test_unarchive(self, service):
+        fake = use(
+            service,
+            {
+                ("GET", "entities/500"): {"data": {"id": 500, "archived_at": TS}},
+                ("POST", "entities/500/archive"): {
+                    "data": {"id": 500, "archived_at": None}
+                },
+            },
+        )
+
+        assert service.set_archived(500, False) is False
+        assert len(fake.find("POST", "entities/500/archive")) == 1
+
+    @pytest.mark.asyncio
+    async def test_operations_archive(self, service):
+        use(
+            service,
+            {
+                ("GET", "entities/500"): {"data": {"id": 500, "archived_at": None}},
+                ("POST", "entities/500/archive"): {
+                    "data": {"id": 500, "archived_at": TS}
+                },
+            },
+        )
+        ops = KankaOperations(service=service)
+
+        result = await ops.archive_entities([500])
+
+        assert result == [
+            {"entity_id": 500, "archived": True, "success": True, "error": None}
+        ]
