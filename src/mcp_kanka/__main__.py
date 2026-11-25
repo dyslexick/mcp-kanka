@@ -19,6 +19,8 @@ from pydantic import AnyUrl
 from .resources import get_kanka_context
 from .tools import (
     handle_archive_entities,
+    handle_get_attributes,
+    handle_manage_attributes,
     handle_check_entity_updates,
     handle_create_entities,
     handle_create_posts,
@@ -30,7 +32,7 @@ from .tools import (
     handle_update_entities,
     handle_update_posts,
 )
-from .types import ALL_ENTITY_TYPES
+from .types import ALL_ENTITY_TYPES, ATTRIBUTE_TYPE_IDS
 
 # Load environment variables
 load_dotenv()
@@ -254,6 +256,65 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="get_attributes",
+            description="List the attributes (Attribute tab) of one or more entities, in display order. Types: text, multiline, checkbox, section, random, number, list.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Array of entity IDs",
+                    },
+                },
+                "required": ["entity_ids"],
+            },
+        ),
+        types.Tool(
+            name="manage_attributes",
+            description="Create, update or delete attributes of one entity. Items without id are created; items with id are updated, or deleted with delete=true. Sections group the attributes that follow them by default_order. Checkbox values are true/false.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entity_id": {"type": "integer", "description": "Entity ID"},
+                    "attributes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "integer",
+                                    "description": "Attribute ID (omit to create)",
+                                },
+                                "name": {"type": "string"},
+                                "value": {
+                                    "type": ["string", "number", "boolean", "null"]
+                                },
+                                "type": {
+                                    "type": "string",
+                                    "enum": list(ATTRIBUTE_TYPE_IDS),
+                                },
+                                "is_pinned": {
+                                    "type": "boolean",
+                                    "description": "Show in the entity sidebar (star)",
+                                },
+                                "is_hidden": {
+                                    "type": "boolean",
+                                    "description": "If true, hidden from players",
+                                },
+                                "default_order": {"type": "integer"},
+                                "delete": {
+                                    "type": "boolean",
+                                    "description": "Delete this attribute (needs id)",
+                                },
+                            },
+                        },
+                    },
+                },
+                "required": ["entity_id", "attributes"],
+            },
+        ),
+        types.Tool(
             name="archive_entities",
             description="Archive or unarchive entities (reversible; archived entities stay in Kanka). Works for all entity types.",
             inputSchema={
@@ -428,6 +489,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             result = await handle_update_entities(**arguments)
         elif name == "get_entities":
             result = await handle_get_entities(**arguments)
+        elif name == "get_attributes":
+            result = await handle_get_attributes(**arguments)
+        elif name == "manage_attributes":
+            result = await handle_manage_attributes(**arguments)
         elif name == "archive_entities":
             result = await handle_archive_entities(**arguments)
         elif name == "delete_entities":

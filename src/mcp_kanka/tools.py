@@ -116,6 +116,20 @@ async def handle_archive_entities(**params: Any) -> list[dict[str, Any]]:
     )
 
 
+async def handle_get_attributes(**params: Any) -> list[dict[str, Any]]:
+    """List the attributes of one or more entities."""
+    operations = get_operations()
+    return await operations.get_attributes(params.get("entity_ids", []))
+
+
+async def handle_manage_attributes(**params: Any) -> list[dict[str, Any]]:
+    """Create, update or delete attributes of one entity."""
+    operations = get_operations()
+    return await operations.manage_attributes(
+        int(params["entity_id"]), params.get("attributes", [])
+    )
+
+
 async def handle_delete_entities(**params: Any) -> list[DeleteEntityResult]:
     """
     Delete one or more entities.

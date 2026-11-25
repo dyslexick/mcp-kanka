@@ -45,6 +45,18 @@ MODULE_ENTITY_TYPES: tuple[EntityType, ...] = (
 # category, which needs a category_id)
 ALL_ENTITY_TYPES: tuple[EntityType, ...] = (*MODULE_ENTITY_TYPES, "custom")
 
+# Kanka attribute types (App\\Enums\\AttributeType) by name.
+ATTRIBUTE_TYPE_IDS: dict[str, int] = {
+    "text": 1,
+    "multiline": 2,
+    "checkbox": 3,
+    "section": 4,
+    "random": 5,
+    "number": 6,
+    "list": 7,
+}
+ATTRIBUTE_TYPE_NAMES: dict[int, str] = {v: k for k, v in ATTRIBUTE_TYPE_IDS.items()}
+
 # Entity types that may be deleted through this server. Newer types are
 # deliberately excluded so that a mistake cannot remove them.
 DELETABLE_ENTITY_TYPES: tuple[EntityType, ...] = (
