@@ -555,6 +555,78 @@ class KankaOperations:
                 )
         return results
 
+    async def get_attributes(self, entity_ids: list[int]) -> list[dict[str, Any]]:
+        """Return the attributes of each entity."""
+        results: list[dict[str, Any]] = []
+        for entity_id in entity_ids:
+            try:
+                results.append(
+                    {
+                        "entity_id": entity_id,
+                        "attributes": self.service.list_attributes(entity_id),
+                        "success": True,
+                        "error": None,
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Failed to list attributes for {entity_id}: {e}")
+                results.append(
+                    {
+                        "entity_id": entity_id,
+                        "attributes": [],
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
+        return results
+
+    async def manage_attributes(
+        self, entity_id: int, attributes: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Create, update or delete attributes of one entity.
+
+        Each item without "id" is created. Items with "id" are updated, or
+        deleted when "delete" is true.
+        """
+        results: list[dict[str, Any]] = []
+        for item in attributes:
+            attribute_id = item.get("id")
+            try:
+                if attribute_id and item.get("delete"):
+                    self.service.delete_attribute(entity_id, int(attribute_id))
+                    results.append(
+                        {
+                            "id": attribute_id,
+                            "action": "deleted",
+                            "success": True,
+                            "error": None,
+                        }
+                    )
+                elif attribute_id:
+                    row = self.service.update_attribute(
+                        entity_id, int(attribute_id), item
+                    )
+                    results.append(
+                        {**row, "action": "updated", "success": True, "error": None}
+                    )
+                else:
+                    row = self.service.create_attribute(entity_id, item)
+                    results.append(
+                        {**row, "action": "created", "success": True, "error": None}
+                    )
+            except Exception as e:
+                logger.error(f"Attribute change failed on {entity_id}: {e}")
+                results.append(
+                    {
+                        "id": attribute_id,
+                        "name": item.get("name"),
+                        "action": "failed",
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
+        return results
+
     async def delete_entities(self, entity_ids: list[int]) -> list[DeleteEntityResult]:
         """Delete one or more entities.
 
