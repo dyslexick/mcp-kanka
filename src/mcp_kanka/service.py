@@ -27,6 +27,8 @@ from kanka.models import (
 
 from .converter import ContentConverter
 from .types import (
+    ATTRIBUTE_TYPE_IDS,
+    ATTRIBUTE_TYPE_NAMES,
     DELETABLE_ENTITY_TYPES,
     MODULE_ENTITY_TYPES,
     EntityType,
@@ -901,6 +903,109 @@ class KankaService:
         if isinstance(data, dict) and "archived_at" in data:
             return bool(data.get("archived_at"))
         return archived
+
+    # ------------------------------------------------------------------
+    # Attributes
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _attribute_to_dict(data: dict[str, Any]) -> dict[str, Any]:
+        type_id = data.get("type_id") or 1
+        try:
+            type_id = int(type_id)
+        except (TypeError, ValueError):
+            type_id = 1
+        return {
+            "id": data.get("id"),
+            "name": data.get("name"),
+            "value": data.get("value"),
+            "type": ATTRIBUTE_TYPE_NAMES.get(type_id, "text"),
+            "is_pinned": bool(data.get("is_pinned", data.get("is_star", False))),
+            "is_hidden": bool(data.get("is_private", False)),
+            "default_order": data.get("default_order"),
+        }
+
+    @staticmethod
+    def _attribute_payload(data: dict[str, Any]) -> dict[str, Any]:
+        """Translate tool input into the Kanka attribute payload."""
+        payload: dict[str, Any] = {}
+        if "name" in data and data["name"] is not None:
+            payload["name"] = data["name"]
+        attr_type = data.get("type")
+        if attr_type is not None:
+            if attr_type not in ATTRIBUTE_TYPE_IDS:
+                raise ValueError(
+                    f"Unknown attribute type '{attr_type}'. "
+                    f"Use one of: {', '.join(ATTRIBUTE_TYPE_IDS)}"
+                )
+            payload["type_id"] = ATTRIBUTE_TYPE_IDS[attr_type]
+        if "value" in data:
+            value = data["value"]
+            if isinstance(value, bool):
+                value = "1" if value else "0"
+            elif value is None:
+                value = ""
+            else:
+                value = str(value)
+            payload["value"] = value
+        if data.get("is_pinned") is not None:
+            payload["is_pinned"] = 1 if data["is_pinned"] else 0
+        if data.get("is_hidden") is not None:
+            payload["is_private"] = 1 if data["is_hidden"] else 0
+        if data.get("default_order") is not None:
+            payload["default_order"] = int(data["default_order"])
+        return payload
+
+    def list_attributes(self, entity_id: int) -> list[dict[str, Any]]:
+        """List an entity's attributes, ordered as Kanka shows them."""
+        response = self.client._request("GET", f"entities/{entity_id}/attributes")
+        rows = response.get("data", []) if isinstance(response, dict) else []
+        attributes = [self._attribute_to_dict(row) for row in rows]
+        attributes.sort(
+            key=lambda a: (
+                a["default_order"] if a["default_order"] is not None else 0,
+                a["id"] or 0,
+            )
+        )
+        return attributes
+
+    def create_attribute(self, entity_id: int, data: dict[str, Any]) -> dict[str, Any]:
+        payload = self._attribute_payload(data)
+        if not payload.get("name"):
+            raise ValueError("An attribute needs a name")
+        payload.setdefault("type_id", ATTRIBUTE_TYPE_IDS["text"])
+        response = self.client._request(
+            "POST", f"entities/{entity_id}/attributes", json=payload
+        )
+        row = response.get("data", {}) if isinstance(response, dict) else {}
+        return self._attribute_to_dict(row or payload)
+
+    def update_attribute(
+        self, entity_id: int, attribute_id: int, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        payload = self._attribute_payload(data)
+        if not payload.get("name"):
+            # Kanka validates the name on every update, so keep the current one.
+            current = next(
+                (a for a in self.list_attributes(entity_id) if a["id"] == attribute_id),
+                None,
+            )
+            if current is None:
+                raise ValueError(
+                    f"Attribute {attribute_id} not found on entity {entity_id}"
+                )
+            payload["name"] = current["name"]
+        response = self.client._request(
+            "PATCH", f"entities/{entity_id}/attributes/{attribute_id}", json=payload
+        )
+        row = response.get("data", {}) if isinstance(response, dict) else {}
+        return self._attribute_to_dict(row or {"id": attribute_id, **payload})
+
+    def delete_attribute(self, entity_id: int, attribute_id: int) -> bool:
+        self.client._request(
+            "DELETE", f"entities/{entity_id}/attributes/{attribute_id}"
+        )
+        return True
 
     def delete_entity(self, entity_id: int) -> bool:
         """
